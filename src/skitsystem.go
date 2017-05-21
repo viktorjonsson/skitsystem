@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type appError struct {
@@ -22,11 +23,31 @@ type player struct {
 	Name string
 }
 
+type result struct {
+	homeGoals uint
+	awayGoals uint
+}
+
+type game struct {
+	homePlayers []player
+	awayPlayers []player
+	time        time.Time
+	result      result
+}
+
+type gameRequest struct {
+	HomePlayerIDs []uint64
+	AwayPlayerIDs []uint64
+	Time          time.Time
+}
+
 var nrOfRequests = 0
 var playerMap = make(map[uint64]player)
+var games []game
 
 func main() {
 	http.HandleFunc("/player/", servePlayer)
+	http.HandleFunc("/game/", serveGame)
 	log.Print("Listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
@@ -117,4 +138,54 @@ func createPlayer(r *http.Request) (uint64, *appError) {
 	newPlayer.id = newPlayerID
 	playerMap[newPlayerID] = newPlayer
 	return newPlayerID, nil
+}
+
+func serveGame(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		log.Print("GET /game")
+		getGames(w, r)
+	case "POST":
+		log.Print("POST /game")
+		postGame(w, r)
+	default:
+		http.Error(w, "Only GET and POST are supported", http.StatusMethodNotAllowed)
+	}
+	nrOfRequests++
+}
+
+func getGames(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprint(w, games)
+}
+
+func postGame(w http.ResponseWriter, r *http.Request) {
+	g, err := createGame(r)
+	if err != nil {
+		http.Error(w, err.Message, err.Code)
+		return
+	}
+	fmt.Fprint(w, g)
+}
+
+func createGame(r *http.Request) (*game, *appError) {
+	var gameReq gameRequest
+	jsonData, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return nil, &appError{err, err.Error(), http.StatusInternalServerError}
+	}
+	err = json.Unmarshal(jsonData, &gameReq)
+	if err != nil {
+		return nil, &appError{err, err.Error(), http.StatusBadRequest}
+	}
+	var homePlayers []player
+	var awayPlayers []player
+	for _, p := range gameReq.AwayPlayerIDs {
+		awayPlayers = append(awayPlayers, playerMap[p])
+	}
+	for _, p := range gameReq.HomePlayerIDs {
+		homePlayers = append(homePlayers, playerMap[p])
+	}
+	newGame := game{homePlayers, awayPlayers, gameReq.Time, result{}}
+	games = append(games, newGame)
+	return &newGame, nil
 }
